@@ -1,9 +1,35 @@
-ENGINE=./bin/wasm3
+ENGINE ?= wasm3
 
-WASMCC=$(ENGINE) ./wasm/clang.wasm
-WASMLD=$(ENGINE) ./wasm/wasm-ld.wasm
-WASM2WAT=$(ENGINE) ./wasm/wasm2wat.wasm
-WAT2WASM=$(ENGINE) ./wasm/wat2wasm.wasm
+# Works
+ifeq ($(ENGINE),wasm3)
+	ENG=./bin/wasm3
+	SEP=
+endif
+
+# Works, but takes quite some time (nodejs does not cache wasm compilations)
+ifeq ($(ENGINE),nodejs)
+	ENG=wasm-run
+	SEP=--
+endif
+
+# Fails
+ifeq ($(ENGINE),wasmtime)
+	ENG=wasmtime run --mapdir=/::.
+	SEP=--
+endif
+
+# Fails
+ifeq ($(ENGINE),wasmer)
+	ENG=wasmer run --mapdir=/:.
+	SEP=--
+endif
+
+WASMPATH=./wasm/dbg
+WASMCC=$(ENG) $(WASMPATH)/clang.wasm $(SEP)
+WASMLD=$(ENG) $(WASMPATH)/wasm-ld.wasm $(SEP)
+WASM2WAT=$(ENG) $(WASMPATH)/wasm2wat.wasm $(SEP)
+WAT2WASM=$(ENG) $(WASMPATH)/wat2wasm.wasm $(SEP)
+WASM3=$(ENG) ./wasm3.wasm $(SEP)
 
 CC=$(WASMCC) -cc1 -triple wasm32-unknown-wasi -isysroot /sys -internal-isystem /sys/include -emit-obj
 LD=$(WASMLD) -L/sys/lib/wasm32-wasi /sys/lib/wasm32-wasi/crt1.o -lc
@@ -24,7 +50,7 @@ clean:
 	rm -f *.wasm
 
 test: wasm3.wasm hello.wasm
-	$(ENGINE) wasm3.wasm hello.wasm
+	$(WASM3) hello.wasm
 
 %.wat: %.wasm
 	@echo "Generating $@"
@@ -33,6 +59,12 @@ test: wasm3.wasm hello.wasm
 %.o: %.c $(DEPS)
 	@echo "Compiling $<"
 	@$(CC) -o $@ $< $(CFLAGS)
+
+bin/wasm3:
+	@echo "Building native $@"
+	@gcc -DASSERTS -Dd_m3HasWASI \
+		-I./source/wasm3 ./source/wasm3/*.c \
+		-O3 -g0 -s -flto -lm -static -o $@
 
 wasm3.wasm: $(OBJS)
 	@echo "Linking $@"

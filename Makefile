@@ -11,22 +11,23 @@ ifeq ($(ENGINE),nodejs)
 	SEP=--
 endif
 
-# Compiling: failed to instantiate wasm, command export '_ZSt7nothrow' is not a function
+# Compiling: failed to instantiate wasm. Covered by https://github.com/bytecodealliance/wasmtime/issues/2878
 # Linking:   Works
 ifeq ($(ENGINE),wasmtime)
 	ENG=wasmtime run --mapdir=/::. --mapdir=./::.
 	SEP=--
 endif
 
-# Compiling: unable to rename temporary 'source/hello/hello-196c5320.o.tmp' to output file 'source/hello/hello.o': 'I/O error'
+# Compiling: unable to rename temporary. Covered by https://github.com/wasmerio/wasmer/issues/2297
 # Linking:   Works
 ifeq ($(ENGINE),wasmer)
 	ENG=wasmer run --mapdir=/:. --mapdir=./:.
 	SEP=--
 endif
 
-# Compiling: takes ~5 min, fails on path_rename syscall
+# Compiling: takes ~5 min, fails on path_rename syscall. Covered by https://github.com/WAVM/WAVM/issues/155
 # Linking:   takes ~3 min, then just prints "lld is a generic driver"
+# Cache issue: https://github.com/WAVM/WAVM/issues/314
 ifeq ($(ENGINE),wavm)
 	ENG=wavm run --mount-root .
 endif

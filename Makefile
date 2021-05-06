@@ -3,28 +3,35 @@ ENGINE ?= wasm3
 # Works
 ifeq ($(ENGINE),wasm3)
 	ENG=./bin/wasm3
-	SEP=
 endif
 
-# Works, but takes quite some time (nodejs does not cache wasm compilations)
+# Works, but takes quite some time (can be improved: nodejs currently does not cache wasm compilations)
 ifeq ($(ENGINE),nodejs)
 	ENG=wasm-run
 	SEP=--
 endif
 
-# Fails
+# Compiling: failed to instantiate wasm, command export '_ZSt7nothrow' is not a function
+# Linking:   Works
 ifeq ($(ENGINE),wasmtime)
-	ENG=wasmtime run --mapdir=/::.
+	ENG=wasmtime run --mapdir=/::. --mapdir=./::.
 	SEP=--
 endif
 
-# Fails
+# Compiling: unable to rename temporary 'source/hello/hello-196c5320.o.tmp' to output file 'source/hello/hello.o': 'I/O error'
+# Linking:   Works
 ifeq ($(ENGINE),wasmer)
-	ENG=wasmer run --mapdir=/:.
+	ENG=wasmer run --mapdir=/:. --mapdir=./:.
 	SEP=--
 endif
 
-WASMPATH=./wasm/dbg
+# Compiling: takes ~5 min, fails on path_rename syscall
+# Linking:   takes ~3 min, then just prints "lld is a generic driver"
+ifeq ($(ENGINE),wavm)
+	ENG=wavm run --mount-root .
+endif
+
+WASMPATH=./wasm
 WASMCC=$(ENG) $(WASMPATH)/clang.wasm $(SEP)
 WASMLD=$(ENG) $(WASMPATH)/wasm-ld.wasm $(SEP)
 WASM2WAT=$(ENG) $(WASMPATH)/wasm2wat.wasm $(SEP)

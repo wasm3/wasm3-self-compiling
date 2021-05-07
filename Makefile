@@ -25,10 +25,10 @@ ifeq ($(ENGINE),wasmer)
 	SEP=--
 endif
 
-# Compiling: takes ~5 min, fails on path_rename syscall. Covered by https://github.com/WAVM/WAVM/issues/155
-# Linking:   takes ~3 min, then just prints "lld is a generic driver"
-# Cache issue: https://github.com/WAVM/WAVM/issues/314
+# Compiling: fails on path_rename syscall. Covered by https://github.com/WAVM/WAVM/issues/155
+# Linking:   just prints "lld is a generic driver". Covered by https://github.com/WAVM/WAVM/issues/315
 ifeq ($(ENGINE),wavm)
+	export WAVM_OBJECT_CACHE_DIR=./tmp/cache
 	ENG=wavm run --mount-root .
 endif
 

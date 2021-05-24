@@ -5,16 +5,14 @@ ifeq ($(ENGINE),wasm3)
 	ENG=./bin/wasm3
 endif
 
-# Works, but takes quite some time (can be improved: nodejs currently does not cache wasm compilations)
+# Works, but takes quite some time. Covered by https://github.com/nodejs/node/issues/36671
 ifeq ($(ENGINE),nodejs)
 	ENG=wasm-run
 	SEP=--
 endif
 
-# Compiling: failed to instantiate wasm. Covered by https://github.com/bytecodealliance/wasmtime/issues/2878
-# Linking:   Works
 ifeq ($(ENGINE),wasmtime)
-	ENG=wasmtime run --mapdir=/::. --mapdir=./::.
+	ENG=wasmtime run --allow-unknown-exports --mapdir=/::. --mapdir=./::.
 	SEP=--
 endif
 
@@ -25,8 +23,7 @@ ifeq ($(ENGINE),wasmer)
 	SEP=--
 endif
 
-# Compiling: fails on path_rename syscall. Covered by https://github.com/WAVM/WAVM/issues/155
-# Linking:   just prints "lld is a generic driver". Covered by https://github.com/WAVM/WAVM/issues/315
+# Compiling: fails on some WASI syscalls. Covered by https://github.com/WAVM/WAVM/issues/155
 ifeq ($(ENGINE),wavm)
 	export WAVM_OBJECT_CACHE_DIR=./tmp/cache
 	ENG=wavm run --mount-root .

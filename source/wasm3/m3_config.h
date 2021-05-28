@@ -33,15 +33,19 @@
 # endif
 
 # ifndef d_m3MaxConstantTableSize
-#   define d_m3MaxConstantTableSize             120
+#   define d_m3MaxConstantTableSize             1024
 # endif
 
 # ifndef d_m3MaxDuplicateFunctionImpl
 #   define d_m3MaxDuplicateFunctionImpl         3
 # endif
 
-# ifndef d_m3VerboseLogs
-#   define d_m3VerboseLogs                      1
+# ifndef d_m3EnableExtendedOpcodes
+#   define d_m3EnableExtendedOpcodes            1
+# endif
+
+# ifndef d_m3VerboseErrorMessages
+#   define d_m3VerboseErrorMessages             1
 # endif
 
 # ifndef d_m3FixedHeap

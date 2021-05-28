@@ -123,6 +123,8 @@ M3Result                    Module_AddGlobal            (IM3Module io_module, IM
 M3Result                    Module_AddFunction          (IM3Module io_module, u32 i_typeIndex, IM3ImportInfo i_importInfo /* can be null */);
 IM3Function                 Module_GetFunction          (IM3Module i_module, u32 i_functionIndex);
 
+void                        Module_GenerateNames        (IM3Module i_module);
+
 void                        FreeImportInfo              (M3ImportInfo * i_info);
 
 //---------------------------------------------------------------------------------------------------------------------------------
@@ -175,7 +177,7 @@ typedef struct M3Runtime
 #endif
 
     M3ErrorInfo             error;
-#if d_m3VerboseLogs
+#if d_m3VerboseErrorMessages
     char                    error_message[256]; // the actual buffer. M3ErrorInfo can point to this
 #endif
 

@@ -2,7 +2,7 @@ ENGINE ?= wasm3
 
 # Works
 ifeq ($(ENGINE),wasm3)
-	ENG=./bin/wasm3
+	ENG=./bin/wasm3 --stack-size 200000
 endif
 
 # Works, but takes quite some time. Covered by https://github.com/nodejs/node/issues/36671
@@ -55,6 +55,7 @@ clean:
 	rm -f *.wasm
 
 test: wasm3.wasm hello.wasm
+	$(WASM3) --version
 	$(WASM3) hello.wasm
 
 %.wat: %.wasm

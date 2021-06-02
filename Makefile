@@ -2,7 +2,7 @@ ENGINE ?= wasm3
 
 # Works
 ifeq ($(ENGINE),wasm3)
-	ENG=./bin/wasm3 --stack-size 200000
+	ENG=./bin/wasm3
 endif
 
 # Works, but takes quite some time. Covered by https://github.com/nodejs/node/issues/36671

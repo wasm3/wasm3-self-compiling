@@ -10,7 +10,6 @@
 
 #include "m3_env.h"
 #include "m3_compile.h"
-#include "m3_exec.h"
 #include "m3_exception.h"
 #include "m3_info.h"
 
@@ -80,6 +79,12 @@ void  m3_FreeEnvironment  (IM3Environment i_environment)
 }
 
 
+void m3_SetCustomSectionHandler  (IM3Environment i_environment, M3SectionHandler i_handler)
+{
+    if (i_environment) i_environment->customSectionHandler = i_handler;
+}
+
+
 // returns the same io_funcType or replaces it with an equivalent that's already in the type linked list
 void  Environment_AddFuncType  (IM3Environment i_environment, IM3FuncType * io_funcType)
 {
@@ -106,6 +111,7 @@ void  Environment_AddFuncType  (IM3Environment i_environment, IM3FuncType * io_f
 
     * io_funcType = newType;
 }
+
 
 IM3CodePage RemoveCodePageOfCapacity (M3CodePage ** io_list, u32 i_minimumLineCount)
 {
@@ -177,7 +183,7 @@ IM3Runtime  m3_NewRuntime  (IM3Environment i_environment, u32 i_stackSizeInBytes
         runtime->environment = i_environment;
         runtime->userdata = i_userdata;
 
-        runtime->stack = m3_Malloc (i_stackSizeInBytes + 4*sizeof (m3slot_t)); // TODO: more precise stack checks
+        runtime->stack = m3_Malloc ("Wasm Stack", i_stackSizeInBytes + 4*sizeof (m3slot_t)); // TODO: more precise stack checks
 
         if (runtime->stack)
         {
@@ -193,6 +199,7 @@ void *  m3_GetUserData  (IM3Runtime i_runtime)
 {
     return i_runtime ? i_runtime->userdata : NULL;
 }
+
 
 void *  ForEachModule  (IM3Runtime i_runtime, ModuleVisitor i_visitor, void * i_info)
 {
@@ -292,7 +299,7 @@ M3Result  EvaluateExpression  (IM3Module i_module, void * o_expressed, u8 i_type
 
         if (not result)
         {
-            m3ret_t r = Call (m3code, stack, NULL, d_m3OpDefaultArgs);
+            m3ret_t r = RunCode (m3code, stack, NULL, d_m3OpDefaultArgs);
 
             if (r == 0)
             {                                                                               m3log (runtime, "expression result: %s", SPrintValue (stack, i_type));
@@ -375,7 +382,7 @@ M3Result  ResizeMemory  (IM3Runtime io_runtime, u32 i_numPages)
         if (numPreviousBytes)
             numPreviousBytes += sizeof (M3MemoryHeader);
 
-        void* newMem = m3_Realloc (memory->mallocated, numBytes, numPreviousBytes);
+        void* newMem = m3_Realloc ("Wasm Linear Memory", memory->mallocated, numBytes, numPreviousBytes);
         _throwifnull(newMem);
 
         memory->mallocated = (M3MemoryHeader*)newMem;
@@ -444,6 +451,8 @@ M3Result  InitDataSegments  (M3Memory * io_memory, IM3Module io_module)
 {
     M3Result result = m3Err_none;
 
+    _throwif ("unallocated linear memory", !(io_memory->mallocated));
+
     for (u32 i = 0; i < io_module->numDataSegments; ++i)
     {
         M3DataSegment * segment = & io_module->dataSegments [i];
@@ -453,8 +462,6 @@ M3Result  InitDataSegments  (M3Memory * io_memory, IM3Module io_module)
 _       (EvaluateExpression (io_module, & segmentOffset, c_m3Type_i32, & start, segment->initExpr + segment->initExprSize));
 
         m3log (runtime, "loading data segment: %d; size: %d; offset: %d", i, segment->size, segmentOffset);
-
-        _throwif ("unallocated linear memory", !(io_memory->mallocated));
 
         if (segmentOffset >= 0 && (size_t)(segmentOffset) + segment->size <= io_memory->mallocated->length)
         {
@@ -490,13 +497,17 @@ _           (EvaluateExpression (io_module, & offset, c_m3Type_i32, & bytes, end
             u32 numElements;
 _           (ReadLEB_u32 (& numElements, & bytes, end));
 
-            size_t endElement = (size_t)(numElements) + offset;
+            size_t endElement = (size_t) numElements + offset;
             _throwif ("table overflow", endElement > d_m3MaxSaneTableSize);
 
-            io_module->table0 = m3_ReallocArray (IM3Function, io_module->table0, endElement, io_module->table0Size);
+            // is there any requirement that elements must be in increasing sequence?
+            // make sure the table isn't shrunk.
+            if (endElement > io_module->table0Size)
+            {
+                io_module->table0 = m3_ReallocArray (IM3Function, io_module->table0, endElement, io_module->table0Size);
+                io_module->table0Size = (u32) endElement;
+            }
             _throwifnull(io_module->table0);
-
-            io_module->table0Size = (u32) endElement;
 
             for (u32 e = 0; e < numElements; ++e)
             {
@@ -513,6 +524,22 @@ _               (ReadLEB_u32 (& functionIndex, & bytes, end));
     _catch: return result;
 }
 
+M3Result  m3_CompileModule  (IM3Module io_module)
+{
+    M3Result result = m3Err_none;
+
+    for (u32 i = 0; i < io_module->numFunctions; ++i)
+    {
+        IM3Function f = & io_module->functions [i];
+        if (f->wasm and not f->compiled)
+        {
+_           (CompileFunction (f));
+        }
+    }
+
+    _catch: return result;
+}
+
 M3Result  m3_RunStart  (IM3Module io_module)
 {
 #ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
@@ -521,6 +548,7 @@ M3Result  m3_RunStart  (IM3Module io_module)
 #endif
 
     M3Result result = m3Err_none;
+    i32 startFunctionTmp = -1;
 
     if (io_module and io_module->startFunction >= 0)
     {
@@ -538,9 +566,17 @@ _           (CompileFunction (function));
         IM3Module module = function->module;
         IM3Runtime runtime = module->runtime;
 
-_       ((M3Result) Call (function->compiled, (m3stack_t) runtime->stack, runtime->memory.mallocated, d_m3OpDefaultArgs));
-
+        startFunctionTmp = io_module->startFunction;
         io_module->startFunction = -1;
+
+        result = (M3Result) RunCode (function->compiled, (m3stack_t) runtime->stack, runtime->memory.mallocated, d_m3OpDefaultArgs);
+
+        if (result)
+        {
+            io_module->startFunction = startFunctionTmp;
+            EXCEPTION_PRINT(result);
+            goto _catch;
+        }
     }
 
     _catch: return result;
@@ -551,7 +587,7 @@ M3Result  m3_LoadModule  (IM3Runtime io_runtime, IM3Module io_module)
 {
     M3Result result = m3Err_none;
 
-    if (UNLIKELY(io_module->runtime)) {
+    if (M3_UNLIKELY(io_module->runtime)) {
         return m3Err_moduleAlreadyLinked;
     }
 
@@ -694,12 +730,6 @@ M3Result  m3_FindFunction  (IM3Function * o_function, IM3Runtime i_runtime, cons
         {
 _           (CompileFunction (function))
         }
-
-        // Check if start function needs to be called
-        if (function->module->startFunction)
-        {
-_           (m3_RunStart (function->module))
-        }
     }
     else _throw (ErrorModule (m3Err_functionLookupFailed, i_runtime->modules, "'%s'", i_functionName));
 
@@ -712,6 +742,19 @@ _           (m3_RunStart (function->module))
     return result;
 }
 
+static
+M3Result checkStartFunction(IM3Module i_module)
+{
+    M3Result result = m3Err_none;                               d_m3Assert(i_module);
+
+    // Check if start function needs to be called
+    if (i_module->startFunction >= 0)
+    {
+        result = m3_RunStart (i_module);
+    }
+
+    return result;
+}
 
 uint32_t  m3_GetArgCount  (IM3Function i_function)
 {
@@ -779,10 +822,21 @@ M3Result  m3_CallV  (IM3Function i_function, ...)
     return r;
 }
 
+static
+void  ReportNativeStackUsage  ()
+{
+#   if d_m3LogNativeStack
+        int stackUsed =  m3StackGetMax();
+        fprintf (stderr, "Native stack used: %d\n", stackUsed);
+#   endif
+}
+
+
 M3Result  m3_CallVL  (IM3Function i_function, va_list i_args)
 {
     IM3Runtime runtime = i_function->module->runtime;
     IM3FuncType ftype = i_function->funcType;
+    M3Result result = m3Err_none;
 
     if (!i_function->compiled) {
         return m3Err_missingCompiledCode;
@@ -807,22 +861,22 @@ M3Result  m3_CallVL  (IM3Function i_function, va_list i_args)
         }
     }
     m3StackCheckInit();
-    M3Result r = (M3Result) Call (i_function->compiled, (m3stack_t)(runtime->stack), runtime->memory.mallocated, d_m3OpDefaultArgs);
 
-    runtime->lastCalled = r ? NULL : i_function;
+_   (checkStartFunction(i_function->module))
 
-#if d_m3LogNativeStack
-    int stackUsed =  m3StackGetMax();
-    fprintf (stderr, "Native stack used: %d\n", stackUsed);
-#endif
+    result = (M3Result) RunCode (i_function->compiled, (m3stack_t)(runtime->stack), runtime->memory.mallocated, d_m3OpDefaultArgs);
+    ReportNativeStackUsage ();
 
-    return r;
+    runtime->lastCalled = result ? NULL : i_function;
+
+    _catch: return result;
 }
 
 M3Result  m3_Call  (IM3Function i_function, uint32_t i_argc, const void * i_argptrs[])
 {
     IM3Runtime runtime = i_function->module->runtime;
     IM3FuncType ftype = i_function->funcType;
+    M3Result result = m3Err_none;
 
     if (i_argc != ftype->numArgs) {
         return m3Err_argumentCountMismatch;
@@ -851,22 +905,22 @@ M3Result  m3_Call  (IM3Function i_function, uint32_t i_argc, const void * i_argp
     }
 
     m3StackCheckInit();
-    M3Result r = (M3Result) Call (i_function->compiled, (m3stack_t)(runtime->stack), runtime->memory.mallocated, d_m3OpDefaultArgs);
 
-    runtime->lastCalled = r ? NULL : i_function;
+_   (checkStartFunction(i_function->module))
 
-#if d_m3LogNativeStack
-    int stackUsed =  m3StackGetMax();
-    fprintf (stderr, "Native stack used: %d\n", stackUsed);
-#endif
+    result = (M3Result) RunCode (i_function->compiled, (m3stack_t)(runtime->stack), runtime->memory.mallocated, d_m3OpDefaultArgs);
+    ReportNativeStackUsage ();
 
-    return r;
+    runtime->lastCalled = result ? NULL : i_function;
+
+    _catch: return result;
 }
 
 M3Result  m3_CallArgv  (IM3Function i_function, uint32_t i_argc, const char * i_argv[])
 {
     IM3FuncType ftype = i_function->funcType;
     IM3Runtime runtime = i_function->module->runtime;
+    M3Result result = m3Err_none;
 
     if (i_argc != ftype->numArgs) {
         return m3Err_argumentCountMismatch;
@@ -895,16 +949,15 @@ M3Result  m3_CallArgv  (IM3Function i_function, uint32_t i_argc, const char * i_
     }
 
     m3StackCheckInit();
-    M3Result r = (M3Result) Call (i_function->compiled, (m3stack_t)(runtime->stack), runtime->memory.mallocated, d_m3OpDefaultArgs);
 
-    runtime->lastCalled = r ? NULL : i_function;
+_   (checkStartFunction(i_function->module))
 
-#if d_m3LogNativeStack
-    int stackUsed =  m3StackGetMax();
-    fprintf (stderr, "Native stack used: %d\n", stackUsed);
-#endif
+    result = (M3Result) RunCode (i_function->compiled, (m3stack_t)(runtime->stack), runtime->memory.mallocated, d_m3OpDefaultArgs);
+    ReportNativeStackUsage ();
 
-    return r;
+    runtime->lastCalled = result ? NULL : i_function;
+
+    _catch: return result;
 }
 
 
@@ -1090,8 +1143,7 @@ void m3_ResetErrorInfo (IM3Runtime i_runtime)
 
 uint8_t *  m3_GetMemory  (IM3Runtime i_runtime, uint32_t * o_memorySizeInBytes, uint32_t i_memoryIndex)
 {
-    uint8_t * memory = NULL;
-    d_m3Assert (i_memoryIndex == 0);
+    uint8_t * memory = NULL;                                                    d_m3Assert (i_memoryIndex == 0);
 
     if (i_runtime)
     {
@@ -1107,10 +1159,12 @@ uint8_t *  m3_GetMemory  (IM3Runtime i_runtime, uint32_t * o_memorySizeInBytes, 
     return memory;
 }
 
+
 uint32_t  m3_GetMemorySize  (IM3Runtime i_runtime)
 {
     return i_runtime->memory.mallocated->length;
 }
+
 
 M3BacktraceInfo *  m3_GetBacktrace  (IM3Runtime i_runtime)
 {

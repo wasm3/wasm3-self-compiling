@@ -66,21 +66,33 @@ _try {
     return result;
 }
 
+M3Result  Module_PreallocFunctions  (IM3Module io_module, u32 i_totalFunctions)
+{
+    M3Result result = m3Err_none;
+    if (i_totalFunctions > io_module->allFunctions) {
+        io_module->functions = m3_ReallocArray (M3Function, io_module->functions, i_totalFunctions, io_module->allFunctions);
+        io_module->allFunctions = i_totalFunctions;
+        _throwifnull (io_module->functions);
+    }
+    _catch: return result;
+}
 
 M3Result  Module_AddFunction  (IM3Module io_module, u32 i_typeIndex, IM3ImportInfo i_importInfo)
 {
     M3Result result = m3Err_none;
 
 _try {
+
     u32 index = io_module->numFunctions++;
-    io_module->functions = m3_ReallocArray (M3Function, io_module->functions, io_module->numFunctions, index);
-    _throwifnull(io_module->functions);
-    _throwif("type sig index out of bounds", i_typeIndex >= io_module->numFuncTypes);
+_   (Module_PreallocFunctions(io_module, io_module->numFunctions));
+
+    _throwif ("type sig index out of bounds", i_typeIndex >= io_module->numFuncTypes);
 
     IM3FuncType ft = io_module->funcTypes [i_typeIndex];
 
     IM3Function func = Module_GetFunction (io_module, index);
     func->funcType = ft;
+
 #   ifdef DEBUG
     func->index = index;
 #   endif

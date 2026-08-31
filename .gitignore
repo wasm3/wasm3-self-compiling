@@ -1,6 +1,5 @@
 *.o
 *.obj
-*.a
 *.elf
 *.exe
 *.tmp

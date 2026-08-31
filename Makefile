@@ -29,18 +29,30 @@ ifeq ($(ENGINE),wavm)
 	ENG=wavm run --mount-root .
 endif
 
+# llvm.wasm is a multicall LLVM build: the tool comes first in argv
 WASMPATH=./wasm
-WASMCC=$(ENG) $(WASMPATH)/clang.wasm $(SEP)
-WASMLD=$(ENG) $(WASMPATH)/wasm-ld.wasm $(SEP)
+WASMCC=$(ENG) $(WASMPATH)/llvm.wasm $(SEP) clang
+WASMLD=$(ENG) $(WASMPATH)/llvm.wasm $(SEP) wasm-ld
 WASM2WAT=$(ENG) $(WASMPATH)/wasm2wat.wasm $(SEP)
 WAT2WASM=$(ENG) $(WASMPATH)/wat2wasm.wasm $(SEP)
 WASM3=$(ENG) ./wasm3.wasm $(SEP)
 
-CC=$(WASMCC) -cc1 -triple wasm32-unknown-wasi -isysroot /sys -internal-isystem /sys/include -emit-obj
-LD=$(WASMLD) -L/sys/lib/wasm32-wasi /sys/lib/wasm32-wasi/crt1.o -lc
+# libc headers live in the target subdirectory, clang's builtins one level up
+CC=$(WASMCC) -cc1 -triple wasm32-unknown-wasip1 -isysroot /sys \
+   -internal-isystem /sys/include/wasm32-wasip1 -internal-isystem /sys/include -emit-obj
+# clock() is opt-in emulation in wasi-libc, and __multi3 comes from compiler-rt
+LD=$(WASMLD) -L/sys/lib/wasm32-wasip1 -L/sys/lib/wasm32-unknown-wasip1 \
+   /sys/lib/wasm32-wasip1/crt1.o -lc -lwasi-emulated-process-clocks -lclang_rt.builtins
 
-CFLAGS=-Dd_m3HasMetaWASI -O3
-LDFLAGS=-O3 -s
+# The interpreter dispatches, calls and returns through musttail, which Clang only
+# accepts with the tail-call feature. The rest matches Wasm3's own CMake WASI build.
+# -cc1 spells features out; the driver would take -mtail-call and friends.
+FEATURES=-target-feature +tail-call -target-feature +bulk-memory \
+         -target-feature +nontrapping-fptoint -target-feature +sign-ext \
+         -target-feature +multivalue -target-feature +mutable-globals
+
+CFLAGS=-Dd_m3HasMetaWASI -D_WASI_EMULATED_PROCESS_CLOCKS -O3 $(FEATURES)
+LDFLAGS=-O3 -s -z stack-size=8388608
 
 SRCS := $(wildcard ./source/wasm3/*.c)
 DEPS := $(wildcard ./source/wasm3/*.h)
@@ -55,8 +67,11 @@ clean:
 	rm -f *.wasm
 
 test: wasm3.wasm hello.wasm
-	$(WASM3) --version
-	$(WASM3) hello.wasm
+	@out=$$($(WASM3) --version); echo "$$out"; \
+	  echo "$$out" | grep -q "self-hosting" || { echo "not running inside Wasm3"; exit 1; }; \
+	  echo "$$out" | grep -q "tail-call"    || { echo "built without tail calls"; exit 1; }
+	@out=$$($(WASM3) hello.wasm); echo "$$out"; \
+	  echo "$$out" | grep -q "Hello from WebAssembly" || { echo "hello.wasm did not run"; exit 1; }
 
 %.wat: %.wasm
 	@echo "Generating $@"

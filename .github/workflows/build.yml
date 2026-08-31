@@ -1,0 +1,30 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  self-compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the host engine
+        run: |
+          make bin/wasm3
+          ./bin/wasm3 --version
+
+      - name: Compile Wasm3 with itself using Clang
+        run: make -j$(nproc) wasm3.wasm hello.wasm
+
+      - name: Run the result
+        run: make test
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wasm3.wasm
+          path: wasm3.wasm
